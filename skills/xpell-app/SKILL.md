@@ -6,12 +6,14 @@ This skill is an **umbrella/composition** skill that pulls together the existing
 
 ---
 
-## Requires
+## Hard Requires
 
 - xpell-contract
 - xpell-ui
 - xpell-node
 - server-xvm
+
+## Optional add-ons
 - xpell-3d (optional; only include when the user asks for 3D)
 - vibe-client (optional; only include when working inside the VIBE client repo)
 - vibe-server (optional; only include when working inside the VIBE server repo)
