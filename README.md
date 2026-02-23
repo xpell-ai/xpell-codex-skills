@@ -113,6 +113,9 @@ Website: https://xpell.ai
 Xpell 2 Alpha: https://xpell.ai/xpell-2-alpha/  
 Examples: https://xpell.ai/examples/  
 
+[![Xpell 2 Alpha](https://img.shields.io/badge/Xpell-2.0--alpha-blue)](https://xpell.ai/xpell-2-alpha/)
+
+[![Website](https://img.shields.io/badge/Website-xpell.ai-black)](https://xpell.ai)
 ---
 
 Built by Aime Technologies
