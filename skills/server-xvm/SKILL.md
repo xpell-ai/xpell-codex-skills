@@ -3,11 +3,10 @@ name: Server XVM Contract
 id: server-xvm
 version: 1.0.0
 updated: 2026-02-15
-description: >
-  Feature skill for server-side XVM (persisted apps/views). Storage layout, subscribe model, push-update event contract,
-  and validation policy for persisted JSON (no functions, nano-command allowlist, safe navigate/open-url).
+description: Feature skill for server-side XVM (persisted apps/views). Storage layout, subscribe model, push-update event contract,and validation policy for persisted JSON (no functions, nano-command allowlist, safe navigate/open-url).
 requires:
   - xpell-contract
+  - xpell-core
   - xpell-node
 ---
 

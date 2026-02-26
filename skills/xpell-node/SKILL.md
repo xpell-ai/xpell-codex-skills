@@ -1,78 +1,199 @@
 ---
 name: Xpell Node (xnode) Contract
 id: xpell-node
-version: 1.0.0
-updated: 2026-02-15
-description: >
-  Layer skill for @xpell/node (xnode). Deterministic server runtime rules:
-  modules, transport trust boundary, Wormholes envelope protocol, explicit persistence adapters,
-  no timers/polling, and single-source-of-truth through _x.execute().
+version: 2.0.0
+updated: 2026-02-26
+description: Deterministic server runtime for Xpell 2. Provides module system integration,Wormholes v2 transport gateways, XDB persistence layer, and XSettings file-backed configuration.
 requires:
   - xpell-contract
+  - xpell-core
 ---
 
-# Applies on top of: xpell-contract
+## 1) Applies to / Scope
+- Applies to `@xpell/node` runtime code under `src/`.
+- Applies to bootstrap (`XNode`, `XWebServer`), Wormholes transport, XDB persistence, and XSettings.
+- Applies to host applications that import public API from package entrypoint (`src/index.ts` -> `dist/index.js`).
 
-This skill adds the **server runtime** constraints for `@xpell/node` (xnode) and server-side apps.
+## 2) Core identity (what xnode is and is not)
+- xnode is a server runtime library built on `@xpell/core`.
+- xnode provides ready-to-run HTTP/HTTPS bootstrap helpers (`XWebServer`, `XNode`).
+- xnode also exposes transport primitives (`createWormholesRestRouter`, `createWormholesWSServer`) for host-owned servers.
+- xnode is not a UI runtime and does not expose DOM/browser APIs.
+- xnode does not persist through XData; persistence is explicit in file/SQLite stores.
 
-# Core identity
-- xnode is a **library**, not a framework.
-- Host controls routes/transport; xnode provides the deterministic runtime, module system, and gateways.
-- Single source of truth for externally visible behavior: requests must route to **`_x.execute(xcmd)`** (no side channels).
+### Transport ownership policy (default vs exception)
+- Default: use xnode canonical bootstrap (`XNode` / `XWebServer`) when available.
+- Exception: host-owned HTTP transport is allowed only when integrating into an existing server stack; this exception must be explicitly justified in project docs/PR.
+- Exception path MUST mount Wormholes v2 through xnode gateways (`createWormholesRestRouter` and `createWormholesWSServer`); do not hand-roll `/wh/v2` envelope handlers.
+- Non-negotiables for both default and exception paths:
+  - envelope validation is mandatory (`parseEnvelope`/`assertEnvelope` via xnode gateways),
+  - server context injection is mandatory (`_wid`, `_sid`, route hints),
+  - request allowlist enforcement is mandatory by policy (unknown in generic form; enforce via `_authorize_req` or equivalent gateway policy),
+  - external REQ execution must route only through `_x.execute`.
+- Do not re-implement `GET /wh/v2/hello` and `POST /wh/v2/call` when xnode bootstrap already mounts Wormholes v2.
 
-# Hard forbiddens
-- UI logic / DOM / browser APIs
-- Transport-specific logic inside modules (no raw ws/express/fetch in modules)
-- Background loops: `setInterval`, `setTimeout`
-- Polling watchers / implicit schedulers
-- Hidden persistence or inferred state
+## 3) Public API overview
+- Package manifest has no `exports` map. Public surface is the top-level entrypoint:
+  - `main`: `./dist/index.js`
+  - `module`: `./dist/index.js`
+  - `types`: `./dist/index.d.ts`
+- Top-level exports include:
+  - `@xpell/core` re-exports (`_x`, `XModule`, `XCommand`, `_xlog`, `XResponse*`, etc.).
+  - Node utilities/events: `XUtils`/`_xu`, `XEventManager`/`_xem`.
+  - Settings export alias: `Settings` (aliased from internal `XSettings` singleton).
+  - Server helpers: `XWebServer`, `XNode`, `ServerXVMModule`.
+  - XDB API: `XDB`, `XDBStorageFS`, `XDBStorageSqlite`, `XDBEngine`, entity/file/vector/temp/cache types.
+  - Wormholes API via `export * from "./Wormholes/wh.index.js"`.
 
-# Modules (XModule) — only extension point
-- Every module extends `XModule` with unique `static _name`.
-- External operations are `_op_<name>` methods.
-- Cross-module interaction only via commands/events/XData keys (documented).
+## 4) XDB contract
+- `XDB` is a singleton `XDBModule` (`_name: "xdb"`).
+- Initialization is mandatory before module load:
+  - Call `XDB.init({ storage, ... })`.
+  - Then load module via `_x.loadModule(XDB)`.
+  - `XDB.load()` throws if `init()` was not called with a storage adapter.
+- Storage boundary is explicit:
+  - `IXDBStorage` defines persistence contract (`open/close`, meta/entities/object store/vectors/files/temp).
+  - `XDBStorageFS` implements filesystem layout.
+  - `XDBStorageSqlite` stores meta/entity docs/objects in SQLite and delegates vectors/files/temp to blob storage (default `XDBStorageFS`).
+- Filesystem default layout (`XDBStorageFS`):
+  - `./data/xdb/entities/`
+  - `./data/xdb/cache/`
+  - `./data/xdb/backup/`
+  - `./data/xdb/objects/`
+  - Per entity: `_vectors/`, `_files/`, `_temp/`, `_meta.json`, `_schema.json`, `_data.json`, `_indices.json`, etc.
+- `XDBEntity` hard-requires ready engine via `assertXdbReady()`.
+- Persistence is command-driven and explicit:
+  - Entities/files/vectors/temp stage changes and commit through engine.
+  - Engine delegates to storage adapter methods.
+- `XDB._init` command is intentionally unsupported without a storage registry.
 
-# Transport trust boundary (mandatory)
-- Transport is untrusted.
-- Gateway must validate:
-  - envelope shape
-  - session requirements
-  - xcmd shape (module/op/params)
-- Modules may assume validated envelope, but must still perform domain validation.
+## 5) Wormholes v2 contract
+- Public Wormholes entrypoint is `src/Wormholes/wh.index.ts`.
+- Envelope protocol is JSON-only with required fields: `_v`, `_id`, `_kind`.
+- `parseEnvelope/assertEnvelope` enforces:
+  - Protocol version (`WH_VERSION = 2`).
+  - Kind membership (`HELLO`, `AUTH`, `REQ`, `RES`, `EVT`, `PING`, `PONG`).
+  - `RES` requires valid `_rid`.
+- Gateway execution flow:
+  - `handleEnvelope(env, ctx, opts)` is transport-agnostic.
+  - `REQ` payload must be `{ _module, _op, _params? }`.
+  - Gateway injects server metadata into `_params`: `_wid`, `_sid`, `_from`, `_to`.
+  - Gateway routes REQ to `_x.execute(cmd)`.
+  - Response is `RES` with `_rid` equal to request `_id`.
+- REST transport:
+  - `GET /wh/v2/hello`
+  - `POST /wh/v2/auth` (expects `AUTH` envelope)
+  - `POST /wh/v2/call` (expects `REQ` envelope)
+- WS transport:
+  - `createWormholesWSServer(server, opts)` defaults to path `/wh/v2`.
+  - Sends `HELLO` on connection.
+  - Parses inbound envelopes and delegates to `handleEnvelope`.
 
-# Wormholes v2 (server) — envelope-only
-- JSON only
-- `_kind` is UPPERCASE
-- REQ/RES correlate via `_rid`
-- Session `_sid` enforced after auth (policy-defined)
-- Gateway responsibilities:
-  - parse + validate envelope
-  - inject server-controlled context (e.g., `_ctx`)
-  - call `_x.execute(xcmd)`
-  - return RES with same `_rid`
-  - send EVT only to subscribed targets
+### Auth policy (production vs dev)
+- Production policy: `_require_auth` MUST be `true` for REST and WS gateways.
+- Current code fact: `XWebServer._installWormholesV2()` mounts gateways with `_require_auth: false`; treat this as a dev default, not production policy.
+- Dev mode may set `_require_auth: false` only with an explicit dev/local config flag and loud warning logs.
+- Session policy: after auth policy is enabled, `_sid` must be enforced for authenticated request flow.
+- Never treat missing `_sid` as authenticated.
+- Bootstrap override API for auth policy in `XNode.start(...)` is unknown from current public options; enforce production auth by explicit gateway mounting/config.
 
-# Persistence (explicit & deterministic)
-- Persistence is **not XData**.
-- Use explicit adapters + codecs:
-  - `*_repo.ts` storage adapter CRUD
-  - `*_codec.ts` validation + serialize/deserialize
-- Repos never call modules.
-- No implicit migrations; migrations are explicit ops.
+## 6) Transport trust boundary
+- Transport input is untrusted and must pass `parseEnvelope/assertEnvelope`.
+- Gateway auth policy:
+  - `WHGatewayOptions._require_auth` defaults to `true` in gateway.
+  - `XWebServer._installWormholesV2()` currently installs gateway with `_require_auth: false` (dev default).
+  - Production deployments must override to `_require_auth: true`.
+- Optional authorization hook (`_authorize_req`) runs before `_x.execute`.
+- Modules do not receive raw transport objects (`req`, `res`, `WebSocket`); they receive command params/context fields.
+- REQ/RES correlation is explicit via `_id` (request) and `_rid` (response).
 
-# Errors (structured)
-- Never throw raw exceptions across Wormholes boundaries.
-- Return structured errors with stable `_code` strings.
+## 7) XSettings contract
+- Settings store is file-backed JSON managed by singleton `XSettings` (exported publicly as `Settings`).
+- Location:
+  - Setup/init root: `<work_folder>/settings/server-settings.json`.
+- Behavior:
+  - `onSetup(work_folder)` ensures settings folder, sets file path, saves current in-memory object, starts `fs.watch`.
+  - `init(work_folder)` loads existing settings file and starts watch.
+  - `set(key, value)` mutates in-memory object and persists file synchronously.
+  - `get/has/getAll` expose current in-memory state.
+  - Emits `update` on save/load; emits `error` on IO/parse failures.
+  - `close()` closes watcher.
 
-# Logging
-- Use `_xlog` only.
-- Never log secrets/tokens.
-- Prefer correlation ids (`_rid`, `_trace`) if present; do not invent hidden tracing systems.
+## 8) Module loading model
+- `XNode.start(options)` is idempotent (`_started` guard).
+- First boot path:
+  - Creates work folders.
+  - Calls `_xs.onSetup(work_folder)` and `XWebServer.onSetup(work_folder)`.
+  - Writes `<work_folder>/.xpell-initialized`.
+- Regular boot path:
+  - Calls `_xs.init(work_folder)` and `XWebServer.init(work_folder)`.
+- Runtime start flow:
+  - `_x.start()`
+  - apply optional web overrides/routes
+  - `XWebServer.load()` + `XWebServer.start()`
+  - load `PingModule`
+  - load `ServerXVMModule` and call `init_on_boot()` when present
+- `XDB` is not auto-loaded by `XNode`; host must initialize and load it explicitly.
 
-# Output checklist for code generation
-When asked to generate xnode code, output:
-1) Short explanation
-2) Types/interfaces (DTOs with `_snake_case`)
-3) Module implementation (`XModule` + `_op_*`)
-4) Minimal request example (client → REQ → `_x.execute` → RES)
+## 9) Persistence rules
+- Persistence is explicit and adapter-driven, not XData-driven.
+- Persistent stores in current code:
+  - XSettings JSON file.
+  - XDB FS/SQLite storage layers.
+  - ServerXVM persisted apps/views under `<work_folder>/xvm/apps/<env>/<app_id>/`.
+- Writes are synchronous file writes in several components (`XSettings`, `XWebServer` setup copy, ServerXVM persistence, FS adapter writes).
+- No hidden persistence mirror to `_xd` is implemented in xnode runtime code.
 
+## 10) Hard forbiddens
+- Do not bypass envelope validation for transport input.
+- Do not call module operations directly from transport layers; route REQ through `handleEnvelope` -> `_x.execute`.
+- Do not expose raw transport objects to modules as runtime dependency.
+- Do not persist authoritative state in XData.
+- Do not add UI/DOM/browser logic to xnode runtime modules.
+- Do not introduce hidden background control loops in modules (`setInterval`/`setTimeout` polling patterns).
+- Do not persist function values in ServerXVM app/view JSON.
+- Do not allow unrestricted risky nano-ops (`open-url`, `navigate`) outside policy checks.
+
+## 11) Error handling contract
+- Wormholes protocol/gateway errors are represented with `XError`-based codes (`E_WH_*`).
+- `handleEnvelope` normalizes thrown errors into `XResponseData` (`_ok: false`, `_result: XError.toXData()`).
+- WS transport:
+  - Envelope handling failures without correlation are surfaced as `EVT` named `wh.error` (best effort).
+- REST transport:
+  - `/auth` and `/call` return HTTP 400 with JSON error body on failures.
+  - `/hello` returns HTTP 500 with JSON error body on failures.
+- XDB APIs mix explicit `XResponseData` returns and explicit throws for contract violations (for example missing init/storage).
+- XSettings emits `error` events instead of throwing to callers in watcher/load/save paths.
+
+## 12) Logging rules
+- Logging backend is `@xpell/core` logger (`_xlog`) re-exported by xnode.
+- Runtime logs include:
+  - server start/setup messages
+  - Wormholes connect/disconnect/errors
+  - XDB commit/load/storage errors
+  - ServerXVM boot/validation and push updates
+- No built-in redaction layer is present in xnode. Callers must avoid logging secrets/tokens.
+- Optional verbose transport message logging exists (`WH/WS` message slices when `_log_messages: true`).
+
+## 13) Minimal canonical bootstrap example
+```ts
+import {
+  Settings, XWebServer, createWormholesRestRouter, createWormholesWSServer, whForbidden, whUnauthorized,
+} from "@xpell/node";
+
+const web = new XWebServer();
+web.onSetup("./work");
+Settings.set("xweb", { ...Settings.get("xweb"), "enable-wormhole": false }); // replace dev default installer
+
+const ALLOW = new Set(["ping:ping"]);
+const authorize = (cmd: any, ctx: any) => {
+  // ctx is injected by gateway before _x.execute
+  if (!ctx?._sid) throw whUnauthorized("Missing _sid");
+  if (!ALLOW.has(`${cmd._module}:${cmd._op}`)) throw whForbidden("Op not allowlisted");
+};
+
+web.useRoutes((app) => app.use(createWormholesRestRouter({ _base_path: "/wh/v2", _require_auth: true, _authorize_req: authorize })));
+web.load();
+await web.start();
+createWormholesWSServer(web._web_server!, { _path: "/wh/v2", _require_auth: true, _authorize_req: authorize });
+```

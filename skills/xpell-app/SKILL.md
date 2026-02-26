@@ -1,190 +1,145 @@
-# SKILL: xpell-app
-
-Generate a complete **Xpell 2 Alpha** application skeleton (client + server, optional 3D), using **AI-native runtime contracts**.
-
-This skill is an **umbrella/composition** skill that pulls together the existing Xpell skills and produces an end-to-end app structure that Codex can extend safely.
-
 ---
-
-## Hard Requires
-
+description: |
+  Composition-level skill for generating complete Xpell 2 applications.
+  Produces deterministic full-stack app structure (client + server)
+  using Wormholes v2, XVMApp, XModule, XData2, and Nano-Commands v2. No
+  external frameworks. No implicit architecture.
+id: xpell-app
+name: Xpell App Composition Contract
+requires:
 - xpell-contract
-- xpell-ui
+- xpell-core
 - xpell-node
+- xpell-ui
 - server-xvm
-
-## Optional add-ons
-- xpell-3d (optional; only include when the user asks for 3D)
-- vibe-client (optional; only include when working inside the VIBE client repo)
-- vibe-server (optional; only include when working inside the VIBE server repo)
-
-> If you are not sure whether 3D or VIBE is needed, do NOT include them.  
-> Default to a 2D UI app with xnode + wormholes.
-
+updated: 2026-02-26
+version: 1.1.0
 ---
 
-## When to use this skill
+# Purpose
 
-Use **xpell-app** when the task is one of:
+`xpell-app` is an umbrella / scaffolding skill.
 
-- “Create a new Xpell 2 app”
-- “Generate a full app skeleton”
-- “Create client + server + wormholes”
-- “Create an example app for xpell.ai”
-- “Build a CRUD dashboard app (runtime-driven UI)”
-- “Create XVMApp app shell + server module ops”
-- “Refactor a repo into a clean Xpell 2 app structure”
+It does NOT define runtime rules. It composes existing Xpell runtime
+layers into a complete working application.
 
-Do NOT use this skill for small edits inside one module. Use the specific layer skill instead.
+Use this skill when generating:
 
----
+-   Starter apps
+-   Example dashboards
+-   Agent control panels
+-   Admin tools
+-   Minimal full-stack demos
+-   Template repositories
 
-## Non-negotiable contracts (must follow)
+------------------------------------------------------------------------
 
-1) **Do not infer missing state.** If files/modules do not exist in repo, create them only when the task explicitly requires it.
+# Architecture Contract
 
-2) **XModule is the only behavior extension point** on the server runtime:
-- No ad-hoc global functions as “server logic”.
-- No cross-module mutation except via commands/events or documented XData usage.
+Generated applications MUST follow this structure:
 
-3) **XObject is UI-free.**  
-Core runtime objects must not assume UI behavior. UI logic lives only in XUI/XUIObject in `@xpell/ui`.
+    project-root/
+      client/
+        src/
+        index.html
+        package.json
+      server/
+        src/
+        package.json
+      shared/ (optional)
 
-4) **Single source of truth for state**
-- Use XData 2 / documented runtime state keys.
-- Do not mirror state in multiple places “for convenience”.
+Rules:
 
-5) **Serializable UI + logic**
-- Prefer Nano-Commands v2 (JSON handlers + sequences) over JS functions in views.
-- Views should be storable and patchable as pure data.
+-   No monolithic structure
+-   No mixing server and client code
+-   No external UI frameworks (React, Vue, Next, etc.)
+-   No Express-based custom APIs unless explicitly requested
+-   Server must use @xpell/node
+-   Client must use @xpell/ui
+-   Single source of truth via `_x.execute()`
 
-6) **Wormholes contract**
-- Client/server interactions must use Wormholes and structured commands (XCommand-style envelope).
-- Do not create “custom API endpoints” unless the task explicitly requests REST.
+------------------------------------------------------------------------
 
-7) **No frameworks in the generated app**
-- Do not introduce React/Vue/Next/Vite/Jekyll/etc.
-- If a build tool already exists in the repo, follow it; otherwise keep it minimal.
+# Transport Contract (Mandatory)
 
----
+All client ↔ server communication MUST use:
 
-## Output: what this skill generates
+-   Wormholes v2
+-   Envelope-based REQ/RES
+-   `_module`, `_op`, `_params`
+-   Deterministic server context injection
 
-When asked to “generate a full app”, produce:
+Custom REST endpoints are forbidden unless explicitly requested. If REST
+is used, it must be the Wormholes REST router.
 
-### A) Client (Web UI)
-- A minimal **XVMApp** application manifest:
-  - App shell layout
-  - Containers/regions
-  - Routes
-  - Initial navigation
-- 2–3 views (as structured JSON) demonstrating:
-  - List screen
-  - Details/Edit screen
-  - Create screen (optional)
-- A minimal client bootstrap entry that:
-  - starts runtime
-  - mounts player/root
-  - loads the app manifest
-  - connects Wormholes (if server enabled)
+------------------------------------------------------------------------
 
-### B) Server (xnode)
-- A server entry that:
-  - boots xnode runtime
-  - registers one XModule
-  - exposes a few ops (list/create/update)
-- A single “Example” module (e.g. `ItemsModule`) with:
-  - deterministic ops
-  - explicit params validation (basic)
-  - no hidden cross-module mutations
+# Server Rules
 
-### C) Shared contracts
-- A shared “command envelope” definition and naming conventions:
-  - module name
-  - op names
-  - params schema shape
-- A minimal “app config” (json or env) that contains:
-  - wormholes url
-  - app name
-  - feature flags (3d enabled / server enabled)
+Server MUST:
 
-### D) Docs
-- README that explains:
-  - how to run client
-  - how to run server
-  - how wormholes connects them
-  - how to extend with new modules/views
+-   Use XModule as the only extension point
+-   Expose operations via `_op_<name>` methods
+-   Use explicit persistence (repos + codecs)
+-   Never use timers, polling, or background loops
+-   Never embed transport logic inside modules
+-   Never return raw errors across boundaries
 
----
+Server bootstrap must:
 
-## Repository layout (default)
+-   Load required modules via `_x.loadModule()`
+-   Start Wormholes gateway
+-   Route all external calls to `_x.execute()`
 
-If the repo does not already dictate structure, default to:
+------------------------------------------------------------------------
 
-- /client
-  - /src
-    - main entry
-    - app manifest (XVMApp)
-    - views (pure JSON)
-    - wormholes client wiring
-- /server
-  - /src
-    - main entry
-    - modules/
-      - ExampleModule (XModule)
-    - wormholes server wiring
-- /shared (optional)
-  - command envelope shape
-  - shared constants (module/op names)
+# Client Rules
 
-If you are inside an existing monorepo, adapt to its conventions. Do not fight the repo.
+Client MUST:
 
----
+-   Use XVMApp for application definition
+-   Define views in pure JSON (Nano-Commands v2 compatible)
+-   Avoid inline JS functions inside view definitions
+-   Use XVM navigation rules (add → stack → navigate)
+-   Never call server directly via fetch unless explicitly requested
+-   Use Wormholes client for communication
 
-## “Full App Example” default scenario (if user doesn’t specify)
+------------------------------------------------------------------------
 
-Default example app: **Items Dashboard**
-- Items list
-- Item details/edit
-- Create item
-- Server stores data in-memory initially (unless XDB is already wired)
-- One real-time event example (optional):
-  - server emits “items-updated”
-  - client refreshes list
+# Example App Expectations
 
-Do NOT claim persistence unless it’s implemented.
+When generating an example app, it MUST include:
 
----
+1.  At least one server module (e.g., ItemsModule)
+2.  At least one client view rendered via XVMApp
+3.  At least one Wormholes REQ → RES interaction
+4.  Runnable instructions (npm install + start)
+5.  No placeholder-only mocks unless explicitly requested
 
-## Acceptance criteria (must pass)
+------------------------------------------------------------------------
 
-- App runs with minimal steps.
-- Client can call at least one server op via Wormholes.
-- Views are stored as pure JSON (no JS functions) unless repo forces otherwise.
-- Exactly one clear module is responsible for the example domain.
-- No cross-module mutations except through approved contracts.
-- No new frameworks or build chains added.
+# Determinism Requirements
 
----
+Generated code must:
 
-## Prompt templates (for users)
+-   Be runnable
+-   Not rely on hidden globals
+-   Not assume framework-specific behavior
+-   Follow snake_case for command parameters
+-   Keep module names stable
+-   Avoid implicit state
 
-### Template 1: Create a full app skeleton
-“Create a new Xpell 2 Alpha app with @xpell/ui + @xpell/node and Wormholes.  
-Build an Items Dashboard (list + edit) using XVMApp and data-only views (Nano-Commands v2).  
-Keep it minimal, runnable, and contract-correct.”
+------------------------------------------------------------------------
 
-### Template 2: Add 3D
-“Extend the app to include a simple @xpell/3d scene view that reacts to XData 2 state changes.  
-Do not break the existing UI and keep 3D optional behind a flag.”
+# Output Checklist
 
-### Template 3: Prepare for xpell.ai example
-“Create a ‘full app example’ suitable for linking from xpell.ai: add a README, minimal run steps, and a clean folder structure.”
+When asked to generate a full app, output:
 
----
+1.  Short architecture explanation
+2.  Folder structure
+3.  Server implementation (module + bootstrap)
+4.  Client implementation (XVMApp + views)
+5.  Run instructions
+6.  Minimal README.md
 
-## Notes
-
-- This skill is meant to produce **a runnable baseline**, not a complete product.
-- Prefer correctness and contract clarity over features.
-- If something is missing (e.g., wormholes server setup not present), implement the minimal scaffolding required and document assumptions explicitly.
+No incomplete scaffolding. No pseudo-code. No conceptual-only output.
